@@ -31,6 +31,6 @@ find /backup/ -type d -maxdepth 1 -mindepth 1 -exec bash -c 'backup_dir $1' shel
 if [ -z ${FORGET_ARGS+x} ]; then
   echo "FORGET_ARGS not set, not running forget"
 else
-  restic forget ${FORGET_ARGS}
+  restic forget "${FORGET_ARGS}"
 fi
 

@@ -1,0 +1,11 @@
+services:
+  restic:
+    image: restica
+    volumes:
+      - ./test:/backup/test
+    environment:
+      - RESTIC_REPOSITORY=/restic-repo
+      - RESTIC_PASSWORD=thePassword
+      - CRON_EXPRESSION=* * * * *
+      - GOMAXPROCS=2
+      - FORGET_ARGS=--keep-last 1 --prune
