@@ -9,12 +9,22 @@ jobs:
   build:
     name: Build and Push
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     permissions:
       contents: read
       packages: write
 
     steps:
+      -
+        name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
       -
         name: Checkout
         uses: actions/checkout@v4
@@ -25,20 +35,68 @@ jobs:
           registry: ghcr.io
           username: ${{github.actor}}
           password: ${{secrets.GITHUB_TOKEN}}
-#      -
-#        # Add support for more platforms with QEMU (optional)
-#        # https://github.com/docker/setup-qemu-action
-#        name: Set up QEMU
-#        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.platform }}
       -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       -
         name: Build
+        id: build
         uses: docker/build-push-action@v6
         with:
+          platforms: ${{ matrix.platform }}
           context: .
-          cache-from: type=registry,ref=ghcr.io/nelsongraca/restic:buildcache
-          cache-to: type=registry,ref=ghcr.io/nelsongraca/restic:buildcache,mode=max
-          push: true
-          tags: ghcr.io/nelsongraca/restic:latest
+          cache-from: type=registry,ref=ghcr.io/nelsongraca/restic:buildcache-${{ env.PLATFORM_PAIR }}
+          cache-to: type=registry,ref=ghcr.io/nelsongraca/restic:buildcache-${{ env.PLATFORM_PAIR }},mode=max
+          outputs: type=image,name=ghcr.io/nelsongraca/restic,push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+      -
+        name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      -
+        name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+  tag:
+    name: Tag
+    runs-on: ubuntu-latest
+    needs:
+      - build
+
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      -
+        name: GHCR Login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
+      -
+        name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |          
+          docker buildx imagetools create -t ghcr.io/nelsongraca/restic:latest $(printf 'ghcr.io/nelsongraca/restic@sha256:%s ' *)
